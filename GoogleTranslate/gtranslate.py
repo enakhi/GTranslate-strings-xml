@@ -289,7 +289,7 @@ def serialize_text(text, language):
     text = text.replace("\\?", "?")     # Replace \? with ?
     text = text.replace("\\\"", "\"")   # Replace \" with "
     
-
+    text=text.lower()
     text = urllib.parse.quote_plus(text) # Encode final string
 
     return text
