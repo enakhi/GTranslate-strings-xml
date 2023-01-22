@@ -391,7 +391,7 @@ async def perform_translate(OUTPUTLANGUAGE):
         
     # Write the file out again
     with open(OUTFILE, 'w',encoding='utf-8') as file:
-        file.write(filedataSp[0]+"<resources>"+filedataSp[1])
+        file.write("<?xml version=\"1.0\" encoding=\"utf-8\"?>\n"+filedataSp[0]+"<resources>"+filedataSp[1])
         
 async def start_translate():
     coroutines = []
