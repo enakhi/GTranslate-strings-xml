@@ -173,6 +173,7 @@
 # This subroutine calls Google translate and extracts the translation from
 # the html request
 
+
 async def translate(to_translate, to_language="auto", language="auto"):
     excepted=False
     while True:
@@ -248,12 +249,16 @@ from pathlib import Path
 import asyncio
 import urllib.parse
 import aiohttp
-
+from lxml import etree
 # ask user for paramters, apply defaults
 INFILE = sys.argv[1]
 INPUTLANGUAGE = sys.argv[2]
 OUTPUTlangs = sys.argv[3:]
 
+
+specialChars = {"%s":"❤️","%1$s":"🥕","%2$s":"🍇","%3$s":"🍐","%4$s":"🍋","%d":"🍖","%1$d":"🍊","%2$d":"🍎","%3$d":"🍓","%4$d":"🍅"}
+
+docTypevariableLists={}
 if not OUTPUTlangs:
     OUTPUTlangs = ["af","sq","am","ar","hy","az","eu","be","bn","bs","bg","ca","ceb","ny","zh-CN","co","hr","cs","da","nl","en","eo","et","tl","fi","fr","fy","gl","ka","de","el","gu","ht","ha","haw","iw","hi","hmn","hu","is","ig","id","ga","it","ja","jw","kn","kk","km","rw","ko","ku","ky","lo","la","lv","lt","lb","mk","mg","ms","ml","mt","mi","mr","mn","my","ne","no","or","ps","fa","pl","pt","pa","ro","ru","sm","gd","sr","st","sn","sd","si","sk","sl","so","es","su","sw","sv","tg","ta","tt","te","th","tr","tk","uk","ur","ug","uz","vi","cy","xh","yi","yo","zu"]
     OUTPUTlangs.remove(INPUTLANGUAGE)
@@ -270,6 +275,10 @@ if OUTDIRECTORY.exists():
 os.makedirs("out")
 
 def serialize_text(text, language):
+
+    for key, val in specialChars.items():
+        text = text.replace(key, val)
+    
     tag_match_regex = re.compile('<.*?>')
     text = re.sub(tag_match_regex, '', text)  # Remove all html tags from text (although there should be none, but still ensuring)
 
@@ -279,12 +288,16 @@ def serialize_text(text, language):
     text = text.replace("\\@", "@")     # Replace \@ with @
     text = text.replace("\\?", "?")     # Replace \? with ?
     text = text.replace("\\\"", "\"")   # Replace \" with "
+    
 
     text = urllib.parse.quote_plus(text) # Encode final string
 
     return text
 
 def deserialize_text(text):
+    
+
+    
     text = text.replace('\\ ', '\\').replace('\\ n ', '\\n').replace('\\n ', '\\n').replace('/ ', '/')
 
     text = text.replace("\n", "\\n")    # Replace next line with \n
@@ -293,25 +306,51 @@ def deserialize_text(text):
     text = text.replace("?", "\\?")     # Replace ? with \?
     text = text.replace("\"", "\\\"")   # Replace " with \"
 
+    for key, val in specialChars.items():
+        text = text.replace(val, key)
+        
+    
     return text
+    
 
+from xml.dom.minidom import parse, parseString
 # repeat proccess for each of the lang
 async def perform_translate(OUTPUTLANGUAGE):
     os.makedirs("out/values-{OUTPUTLANGUAGE}".format(OUTPUTLANGUAGE = OUTPUTLANGUAGE))
     OUTFILE= "out/values-{OUTPUTLANGUAGE}/strings.xml".format(OUTPUTLANGUAGE = OUTPUTLANGUAGE)
     # read xml structure
-    tree = ET.parse(INFILE)
+    tree = etree.parse(INFILE)
     root = tree.getroot()
+    dtd = parse(INFILE).doctype
+    for i in range(len(dtd.entities._seq)):
+        docTypevariableLists[dtd.entities._seq[i].nodeName]=dtd.entities._seq[i].childNodes[0].nodeValue
+    
+    print("doctype Values:",docTypevariableLists)
+    
+    #tree = etree.parse(INFILE)
+    #docinfo = tree.docinfo
+    #print(docinfo.doctype)
 
+    
     print(OUTPUTLANGUAGE + "...\n")
 
+    i=-1
     # cycle through elements
-    for i in range(len(root)):
+    while i  < len(root):
+        i=i+1
+        #if i>3 :
+        #    break
     #	for each translatable string call the translation subroutine
     #   and replace the string by its translation,
     #   descend into each string array
     #     time.sleep(1)
+        if i>=len(root):
+            break
         isTranslatable=root[i].get('translatable')
+        if isTranslatable:
+            root.remove(root[i])
+            i=i-1
+            continue
         if(root[i].tag=='string') & (isTranslatable!='false'):
             # trasnalte text and fix any possible issues traslotor creates: messing up HTML tags, adding spaces between string formatting elements
             totranslate=root[i].text
@@ -324,12 +363,13 @@ async def perform_translate(OUTPUTLANGUAGE):
                     root[i][element].text = " " + await translate(root[i][element].text, OUTPUTLANGUAGE, INPUTLANGUAGE)
                     root[i][element].tail = " " + await translate(root[i][element].tail, OUTPUTLANGUAGE, INPUTLANGUAGE)
 
-        if(root[i].tag=='string-array'):
+        if(root[i].tag=='string-array' or root[i].tag=='plurals'):
+            isParentTranslatable=root[i].get('translatable')
             for j in range(len(root[i])):
     #	for each translatable string call the translation subroutine
     #   and replace the string by its translation,
                 isTranslatable=root[i][j].get('translatable')
-                if(root[i][j].tag=='item') & (isTranslatable!='false'):
+                if(root[i][j].tag=='item') & ((isTranslatable!='false')&(isParentTranslatable!='false')):
                     # trasnalte text and fix any possible issues traslotor creates: messing up HTML tags, adding spaces between string formatting elements
                     totranslate=root[i][j].text
                     if(totranslate!=None):
@@ -342,7 +382,17 @@ async def perform_translate(OUTPUTLANGUAGE):
                             root[i][j][element].tail = " " + await translate(root[i][j][element].tail, OUTPUTLANGUAGE, INPUTLANGUAGE)
     # write new xml file
     tree.write(OUTFILE, encoding='utf-8')
-
+    # Read in the file
+    with open(OUTFILE, 'r',encoding='utf-8') as file :
+        filedata = file.read()
+        filedataSp=filedata.split("<resources>", 1)
+    for key, val in docTypevariableLists.items():
+        filedataSp[1] = filedataSp[1].replace(val, "&"+key+";")
+        
+    # Write the file out again
+    with open(OUTFILE, 'w',encoding='utf-8') as file:
+        file.write(filedataSp[0]+"<resources>"+filedataSp[1])
+        
 async def start_translate():
     coroutines = []
     for OUTPUTLANGUAGE in OUTPUTlangs:
